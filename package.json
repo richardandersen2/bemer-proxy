@@ -1,12 +1,15 @@
 {
   "name": "bemer-proxy",
   "version": "1.0.0",
-  "type": "module",
+  "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "echo No build step",
+    "postinstall": "npx playwright install --with-deps chromium"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.19.2",
-    "puppeteer": "^22.10.0"
+    "playwright": "^1.46.0"
   }
 }
