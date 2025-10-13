@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "playwright": "^1.46.0"
+    "puppeteer": "^22.10.0"
   }
 }
