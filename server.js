@@ -1,37 +1,35 @@
-import express from "express";
-import puppeteer from "puppeteer";
+const express = require('express');
+const cors = require('cors');
+const { chromium } = require('playwright');
 
 const app = express();
+app.use(cors());
 
-// GET /render?url=ENCODET_URL&wait=1500
-app.get("/render", async (req, res) => {
-  const target = req.query.url;
-  const wait = Number(req.query.wait || 1500);
+app.get('/health', (req, res) => res.send('ok'));
 
-  if (!target) {
-    return res.status(400).send("Missing ?url=…");
-  }
-
-  let browser;
+app.get('/render', async (req, res) => {
   try {
-    browser = await puppeteer.launch({
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      headless: true
-    });
-    const page = await browser.newPage();
-    await page.goto(target, { waitUntil: "networkidle2", timeout: 60000 });
-    if (wait > 0) await page.waitForTimeout(wait);
+    const { url, wait = '1500' } = req.query;
+    if (!url) return res.status(400).json({ error: 'Missing ?url=' });
 
+    const browser = await chromium.launch({ args: ['--no-sandbox','--disable-setuid-sandbox'] });
+    const page = await (await browser.newContext()).newPage();
+
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    const waitMs = Math.max(0, parseInt(wait, 10) || 0);
+    if (waitMs) await page.waitForTimeout(waitMs);
+
+    // tag hele body’en efter script har kørt
     const html = await page.content();
-    res.set("Content-Type", "text/html; charset=utf-8").send(html);
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Render error");
-  } finally {
-    if (browser) await browser.close();
+
+    await browser.close();
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.get("/", (_req, res) => res.send("OK"));
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log("Render proxy listening on " + port));
+app.listen(port, () => console.log(`Proxy up on ${port}`));
