@@ -107,3 +107,11 @@ app.get("/price", async (req, res) => {
 
 app.get("/", (_, res) => res.send("BEMER proxy OK"));
 app.listen(PORT, () => console.log(`Proxy up on :${PORT}`));
+
+
+const browser = await chromium.launch({
+  headless: true,
+  args: ['--no-sandbox', '--disable-setuid-sandbox']
+});
+
+
