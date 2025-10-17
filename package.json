@@ -5,7 +5,7 @@
   "engines": { "node": ">=18" },
   "scripts": {
     "start": "node index.mjs",
-    "postinstall": "npx playwright install --with-deps chromium"
+    "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
     "express": "^4.19.2",
