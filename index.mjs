@@ -6,6 +6,12 @@ const PORT  = process.env.PORT || 3010;
 
 const app = express();
 
+
+const browser = await chromium.launch({
+  headless: true,
+  args: ['--no-sandbox', '--disable-setuid-sandbox']
+});
+
 function normalizeDKPrice(s) {
   if (!s) return null;
   s = ("" + s).replace(/\u00A0|&nbsp;|\s+|kr\.?|DKK/gi, "");
@@ -109,9 +115,6 @@ app.get("/", (_, res) => res.send("BEMER proxy OK"));
 app.listen(PORT, () => console.log(`Proxy up on :${PORT}`));
 
 
-const browser = await chromium.launch({
-  headless: true,
-  args: ['--no-sandbox', '--disable-setuid-sandbox']
-});
+
 
 
