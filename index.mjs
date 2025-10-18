@@ -6,11 +6,6 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = '0';
 // Importér først Playwright EFTER env-variablen er sat
 const { chromium } = await import('playwright');
 
-const browser = await chromium.launch({
-  headless: true,
-  args: ['--no-sandbox', '--disable-setuid-sandbox']
-});
-
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -90,4 +85,5 @@ app.get("/render", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Proxy up on :${PORT}`);
 });
+
 
