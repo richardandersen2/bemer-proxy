@@ -52,8 +52,16 @@ async function openPage(url) {
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.waitForTimeout(600);
 
-  return { browser, ctx, page };
-}
+// ... i openPage(url) lige før return:
+try {
+  // Vent på at hovedindhold er på plads (tilpas selectors hvis nødvendigt)
+  await page.waitForSelector("main, #__next, [role='main']", { timeout: 12000 });
+} catch (_) {}
+await page.waitForLoadState("networkidle").catch(() => {});
+await page.waitForTimeout(800); // lidt ekstra ro efter hydrer
+return { browser, ctx, page };
+
+  }
 
 // --- auth middleware ---
 function requireToken(req, res, next) {
@@ -84,7 +92,6 @@ app.get("/render", requireToken, async (req, res) => {
   }
 });
 
-// hjælper: træk produktdata ud
 async function scrapeProduct(page) {
   return await page.evaluate(() => {
     const out = {
@@ -96,10 +103,12 @@ async function scrapeProduct(page) {
       sku: ""
     };
 
-    // 1) JSON-LD Product
-    const ldScripts = Array.from(
-      document.querySelectorAll('script[type="application/ld+json"]')
-    );
+    // helper’e
+    const text = (el) => (el ? (el.textContent || "").trim() : "");
+    const attr = (sel, a) => document.querySelector(sel)?.getAttribute(a) || "";
+
+    // 1) JSON-LD Product (som før)
+    const ldScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
     for (const s of ldScripts) {
       try {
         const data = JSON.parse(s.textContent || "null");
@@ -109,23 +118,13 @@ async function scrapeProduct(page) {
           if (node["@type"] === "Product") {
             out.title ||= node.name || "";
             out.description ||= node.description || "";
-            if (node.image) {
-              if (Array.isArray(node.image)) out.images.push(...node.image);
-              else out.images.push(node.image);
-            }
-            if (node.offers) {
-              const offer = Array.isArray(node.offers)
-                ? node.offers[0]
-                : node.offers;
-              if (offer) {
-                out.price = Number(
-                  offer.price || offer.priceSpecification?.price
-                ) || out.price;
-                out.currency =
-                  (offer.priceCurrency ||
-                    offer.priceSpecification?.priceCurrency ||
-                    "") || out.currency;
-              }
+            const imgs = node.image ? (Array.isArray(node.image) ? node.image : [node.image]) : [];
+            out.images.push(...imgs);
+            const offers = node.offers ? (Array.isArray(node.offers) ? node.offers : [node.offers]) : [];
+            if (offers[0]) {
+              const o = offers[0];
+              out.price = Number(o.price || o.priceSpecification?.price) || out.price;
+              out.currency = (o.priceCurrency || o.priceSpecification?.priceCurrency || out.currency || "");
             }
             out.sku ||= node.sku || "";
           }
@@ -133,43 +132,79 @@ async function scrapeProduct(page) {
       } catch {}
     }
 
-    // 2) Meta/OG fallback
-    const get = (sel, attr) =>
-      document.querySelector(sel)?.getAttribute(attr) || "";
-    out.title ||= document.querySelector("h1")?.textContent?.trim() ||
-      get("meta[property='og:title']", "content") ||
-      document.title ||
-      "";
-    out.description ||= get("meta[name='description']", "content") || "";
-    const ogImg = get("meta[property='og:image']", "content");
-    if (ogImg) out.images.push(ogImg);
+    // 2) Titel & meta fallback
+    out.title ||= text(document.querySelector("h1")) ||
+                  attr("meta[property='og:title']", "content") ||
+                  document.title || "";
 
-    // 3) Price fallback (hent første tal på siden med komma/punkt)
+    // 3) Beskrivelse: prøv produktsektioner og meta
+    const descCandidates = [
+      "[data-testid*='description']",
+      "[class*='description']",
+      "[itemprop='description']",
+      "section[aria-label*='beskrivelse' i]"
+    ];
+    for (const sel of descCandidates) {
+      const el = document.querySelector(sel);
+      if (el) { out.description = text(el); if (out.description) break; }
+    }
+    out.description ||= attr("meta[name='description']", "content") || "";
+
+    // 4) Pris & valuta fallback
     if (out.price == null) {
-      const priceEl =
+      const priceNode =
         document.querySelector("[itemprop='price']") ||
         document.querySelector("[data-testid*='price']") ||
         document.querySelector("[class*='price']");
-      const txt = priceEl?.textContent || "";
+      const txt = text(priceNode);
       const m = txt.match(/(\d{1,3}([.\s]\d{3})*|\d+)([,\.\s]\d{2})?/);
       if (m) {
         const norm = m[0].replace(/\./g, "").replace(/\s/g, "").replace(",", ".");
         const num = Number(norm);
         if (!Number.isNaN(num)) out.price = num;
       }
-      // currency tegn
       if (!out.currency) {
         if (/[€]/.test(txt)) out.currency = "EUR";
-        else if (/[kr]/i.test(txt)) out.currency = "DKK";
+        else if (/(kr|DKK)/i.test(txt)) out.currency = "DKK";
       }
     }
 
-    // 4) Unikke billeder
+    // 5) Billeder – flere kilder
+    const addImg = (u) => { if (u && typeof u === "string") out.images.push(u); };
+
+    // a) OG image
+    addImg(attr("meta[property='og:image']", "content"));
+
+    // b) Preload’d images
+    document.querySelectorAll("link[rel='preload'][as='image'][href]").forEach(l => addImg(l.getAttribute("href")));
+
+    // c) Synlige <img>
+    document.querySelectorAll("img").forEach(img => {
+      addImg(img.currentSrc || img.src || "");
+      const srcset = img.getAttribute("srcset");
+      if (srcset) {
+        const last = srcset.split(",").map(s => s.trim().split(" ")[0]).pop();
+        addImg(last);
+      }
+    });
+
+    // d) background-image på elementer
+    document.querySelectorAll("*").forEach(el => {
+      const bg = getComputedStyle(el).getPropertyValue("background-image");
+      const m = bg && bg.match(/url\(["']?([^"')]+)["']?\)/);
+      if (m && m[1]) addImg(m[1]);
+    });
+
+    // e) Ryd op & gør unik
     out.images = Array.from(new Set(out.images.filter(Boolean)));
+
+    // 6) SKU – kig efter itemprop eller data-attributter
+    out.sku ||= attr("[itemprop='sku']", "content") || text(document.querySelector("[itemprop='sku']")) || "";
 
     return out;
   });
 }
+
 
 // JSON: fuldt produkt
 app.get("/product", requireToken, async (req, res) => {
@@ -208,3 +243,22 @@ app.get("/price", requireToken, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Proxy up on :${PORT}`);
 });
+
+app.get("/debug", requireToken, async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send("Missing url");
+  let browser, ctx, page;
+  try {
+    ({ browser, ctx, page } = await openPage(url));
+    await page.waitForTimeout(Number(req.query.wait || 800));
+    const buf = await page.screenshot({ fullPage: true, type: "png" });
+    res.type("image/png").send(buf);
+  } catch (e) {
+    res.status(500).send("debug error: " + (e?.message || e));
+  } finally {
+    try { await ctx?.close(); } catch {}
+    try { await browser?.close(); } catch {}
+  }
+});
+
+
