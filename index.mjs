@@ -109,9 +109,13 @@ async function openPage(url) {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
   // Vent til hoved-layout findes
-  await page
-    .waitForSelector("main, #__next, [role='main']", { timeout: 12000 })
-    .catch(() => {});
+// ⏳ Vent på at prisen er i DOM (fast forankret til produktsiden, ikke teaser)
+await page.waitForSelector(
+  'main#Page .prod-detail dl dt:has-text("Vejledende salgspris") + dd, ' +
+  'aside#PageSidebar .prod-detail dl dt:has-text("Vejledende salgspris") + dd',
+  { timeout: 7000 }
+).catch(() => {});
+
 
   // Klik cookies – også i iframes
   await acceptCookiesEverywhere(page);
@@ -160,31 +164,90 @@ async function scrapeProduct(page) {
     (await page.title()).trim() ||
     "Bemer Shop";
 
-  // Pris – kig først i tydelige pris-elementer
-  const priceTexts = unique(
-    await page
-      .locator(
-        [
-          "[data-test*='price']",
-          "[class*='price']",
-          "[itemprop='price']",
-          "meta[property='product:price:amount']",
-        ].join(",")
-      )
-      .allTextContents()
-  );
+ // 🧠 Udtræk: titel, pris, valuta, billeder
+// ✨ BEMER: præcis pris fra main/aside DL (undgå teaser-priser)
 
-  // tilføj hele body-tekst som sidste fallback (kan finde “kr …”)
-  priceTexts.push(await page.evaluate(() => document.body.innerText).catch(() => ""));
+function parseDKKPrice(txt) {
+  if (!txt) return null;
+  // fjern whitespace og nbsp
+  const clean = txt.replace(/\u00A0/g, ' ').trim();
+  // fx "35.100,00 kr." -> 35100
+  const m = clean.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/);
+  if (!m) return null;
+  const normalized = m[1].replace(/\./g, '').replace(',', '.');
+  const num = Number(normalized);
+  return Number.isFinite(num) ? Math.round(num) : null;
+}
 
-  let price = null;
-  for (const txt of priceTexts) {
-    const p = parseDKKPrice(txt);
-    if (p) {
-      price = p;
-      break;
+let price = null;
+let currency = 'DKK';
+
+// 1) Primær strategi: find <dt> med "Vejledende salgspris" og tag nabo-<dd>
+//    Begræns søgning til selve produktsiden (main/aside) for at undgå “Andre kunder…” teaser-priser.
+const labelSelectors = [
+  'main#Page .prod-detail dl dt:has-text("Vejledende salgspris") + dd',
+  'aside#PageSidebar .prod-detail dl dt:has-text("Vejledende salgspris") + dd',
+  // engelske/tyske varianter – i tilfælde af sprogskift
+  'main#Page .prod-detail dl dt:has-text("Retail price") + dd',
+  'aside#PageSidebar .prod-detail dl dt:has-text("Retail price") + dd',
+  'main#Page .prod-detail dl dt:has-text("Preis") + dd',
+  'aside#PageSidebar .prod-detail dl dt:has-text("Preis") + dd',
+];
+
+for (const sel of labelSelectors) {
+  try {
+    const loc = page.locator(sel).first();
+    if (await loc.count()) {
+      const raw = await loc.textContent({ timeout: 2000 });
+      const p = parseDKKPrice(raw);
+      if (p) { price = p; break; }
     }
+  } catch {}
+}
+
+// 2) Fallback hvis 1) ikke gav noget: kig efter typiske prisfelter,
+//    men stadig KUN i main/aside, og ekskludér sektionen med “.suggested-products”
+if (price == null) {
+  const candidates = await page.locator([
+    // begræns til main/aside
+    'main#Page .prod-detail [itemprop="price"]',
+    'aside#PageSidebar .prod-detail [itemprop="price"]',
+    'main#Page .prod-detail .price, aside#PageSidebar .prod-detail .price',
+    // meta tags hvis sat
+    'meta[property="product:price:amount"]'
+  ].join(','))
+  .evaluateAll((nodes) => nodes.map(n => {
+    if (n.tagName === 'META') return n.getAttribute('content') || '';
+    return (n.textContent || '').trim();
+  })).catch(() => []);
+
+  for (const txt of candidates) {
+    const p = parseDKKPrice(txt);
+    if (p) { price = p; break; }
   }
+}
+
+// 3) Ultimativ fallback: skan hele main/aside som tekst (ikke body),
+//    så vi undgår teaser-priserne i “Andre kunder…”
+if (price == null) {
+  const mainText = await page.locator('main#Page, aside#PageSidebar').innerText().catch(() => '');
+  const p = parseDKKPrice(mainText);
+  if (p) price = p;
+}
+
+// 4) Valuta – forsøg at aflæse “kr” => DKK, ellers behold DKK som default
+try {
+  const ddText = await page.locator(
+    'main#Page .prod-detail dl dt:has-text("Vejledende salgspris") + dd, ' +
+    'aside#PageSidebar .prod-detail dl dt:has-text("Vejledende salgspris") + dd'
+  ).first().textContent({ timeout: 1000 }).catch(() => '');
+  if (ddText && /\bkr\b/i.test(ddText)) currency = 'DKK';
+} catch {}
+
+// Sæt i result-objekt
+result.price = price ?? null;
+result.currency = currency;
+
 
   // Valuta – forsøg at gætte, ellers DKK
   let currency = "DKK";
