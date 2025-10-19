@@ -232,19 +232,6 @@ try {
 } catch {}
 
 
-
-
-  // Valuta – forsøg at gætte, ellers DKK
-  let currency = "DKK";
-  const currencyHit =
-    (await page
-      .locator("meta[property='product:price:currency'], [itemprop='priceCurrency']")
-      .first()
-      .evaluate((el) => (el.tagName === "META" ? el.content : el.getAttribute("content")))
-      .catch(() => null)) ||
-    (/\bDKK\b/i.test(await page.evaluate(() => document.body.innerText)) ? "DKK" : null);
-  if (currencyHit) currency = "DKK";
-
   // Billeder (små + større)
   const imgs = unique(
     await page
@@ -382,3 +369,4 @@ app.listen(PORT, () => {
   console.log(`Proxy up on :${PORT}`);
   console.log(`Base: ${BASE}`);
 });
+
