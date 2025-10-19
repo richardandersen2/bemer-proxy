@@ -164,20 +164,7 @@ async function scrapeProduct(page) {
     (await page.title()).trim() ||
     "Bemer Shop";
 
- // 🧠 Udtræk: titel, pris, valuta, billeder
-// ✨ BEMER: præcis pris fra main/aside DL (undgå teaser-priser)
 
-function parseDKKPrice(txt) {
-  if (!txt) return null;
-  // fjern whitespace og nbsp
-  const clean = txt.replace(/\u00A0/g, ' ').trim();
-  // fx "35.100,00 kr." -> 35100
-  const m = clean.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/);
-  if (!m) return null;
-  const normalized = m[1].replace(/\./g, '').replace(',', '.');
-  const num = Number(normalized);
-  return Number.isFinite(num) ? Math.round(num) : null;
-}
 
 let price = null;
 let currency = 'DKK';
@@ -244,9 +231,7 @@ try {
   if (ddText && /\bkr\b/i.test(ddText)) currency = 'DKK';
 } catch {}
 
-// Sæt i result-objekt
-result.price = price ?? null;
-result.currency = currency;
+
 
 
   // Valuta – forsøg at gætte, ellers DKK
